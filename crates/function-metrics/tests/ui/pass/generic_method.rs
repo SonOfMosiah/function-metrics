@@ -10,5 +10,5 @@ impl Runner {
 }
 
 fn main() {
-    assert_eq!(Runner::run("quote"), "quote");
+    assert_eq!(Runner::run("task"), "task");
 }

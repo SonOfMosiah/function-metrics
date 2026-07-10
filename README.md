@@ -4,8 +4,8 @@ Prometheus-native function instrumentation for Rust's
 [`metrics`](https://crates.io/crates/metrics) facade.
 
 `function-metrics` turns a small attribute into a consistently named metric
-family while preserving useful domain labels such as `chain_id`, `provider`,
-or `dex`.
+family while preserving useful application labels such as `method`, `service`,
+or `status`.
 
 > The first release implements duration histograms. Call counts, error counts,
 > and in-flight gauges are planned behind the same operation-name interface.
@@ -27,10 +27,10 @@ function-metrics = { git = "https://github.com/SonOfMosiah/function-metrics" }
 use function_metrics::function_metrics;
 
 #[function_metrics(
-    name = "quote_evm",
-    labels(chain_id, dex = "uniswap_v3")
+    name = "handle_request",
+    labels(method, service = "api")
 )]
-async fn quote(chain_id: ChainId) -> Result<Quote, QuoteError> {
+async fn handle_request(method: Method) -> Result<Response, RequestError> {
     // ...
 }
 ```
@@ -38,7 +38,7 @@ async fn quote(chain_id: ChainId) -> Result<Quote, QuoteError> {
 This records fractional seconds to:
 
 ```text
-quote_evm_duration_seconds{chain_id="8453",dex="uniswap_v3"}
+handle_request_duration_seconds{method="GET",service="api"}
 ```
 
 The operation name defaults to the Rust function name:
@@ -60,15 +60,15 @@ explicit key, or named fields:
 
 ```rust
 #[function_metrics(
-    name = "request",
+    name = "process_request",
     labels(
-        chain_id,
-        provider = "primary",
+        method,
+        service = "api",
         status = request.status,
         request.region,
     )
 )]
-async fn request(chain_id: ChainId, request: Request) {
+async fn process_request(method: Method, request: Request) {
     // ...
 }
 ```
@@ -76,9 +76,9 @@ async fn request(chain_id: ChainId, request: Request) {
 Dynamic values must implement `ToString`. Metric and label names are validated
 as snake_case at compile time, and duplicate label keys are rejected.
 
-Use only bounded label dimensions. Network identifiers, providers, protocols,
-and finite outcome categories are usually appropriate; user IDs, transaction
-hashes, addresses, and arbitrary error messages are not.
+Use only bounded label dimensions. HTTP methods, deployment environments, and
+finite outcome categories are usually appropriate; user IDs, request IDs, file
+paths, and arbitrary error messages are not.
 
 ## Execution semantics
 
@@ -91,17 +91,17 @@ hashes, addresses, and arbitrary error messages are not.
 
 ## Metric naming
 
-An operation named `quote_evm` emits `quote_evm_duration_seconds`. Durations
-use Prometheus's base time unit and are recorded through
+An operation named `handle_request` emits `handle_request_duration_seconds`.
+Durations use Prometheus's base time unit and are recorded through
 `Histogram::record(Duration)`, preserving sub-millisecond precision.
 
 Future metric types will share the same base name:
 
 ```text
-quote_evm_calls_total
-quote_evm_errors_total
-quote_evm_duration_seconds
-quote_evm_in_flight
+handle_request_calls_total
+handle_request_errors_total
+handle_request_duration_seconds
+handle_request_in_flight
 ```
 
 ## Repository structure
@@ -130,5 +130,5 @@ requires every non-development dependency to already exist in the registry.
 
 ## License
 
-GPL-3.0-only. This implementation was extracted from Zenithar, whose source is
-distributed under GPL-3.0.
+GPL-3.0-only. This implementation was extracted from an existing GPL-3.0
+codebase.

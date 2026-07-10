@@ -1,6 +1,6 @@
 use function_metrics::function_metrics;
 
-#[function_metrics(labels(chain_id, chain_id))]
-fn duplicate(chain_id: u64) {}
+#[function_metrics(labels(method, method))]
+fn duplicate(method: &str) {}
 
 fn main() {}

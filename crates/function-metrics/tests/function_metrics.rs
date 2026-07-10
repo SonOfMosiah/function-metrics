@@ -5,16 +5,16 @@ use function_metrics::function_metrics;
 use metrics::Label;
 use metrics_util::debugging::{DebugValue, DebuggingRecorder};
 
-#[function_metrics(name = "test_sync", labels(chain_id, provider = "test"))]
-fn timed_sync(chain_id: u64) -> u64 {
+#[function_metrics(name = "test_sync", labels(shard_id, provider = "test"))]
+fn timed_sync(shard_id: u64) -> u64 {
     std::thread::sleep(Duration::from_millis(2));
-    chain_id
+    shard_id
 }
 
-#[function_metrics(labels(chain_id))]
-async fn timed_async(chain_id: String) -> String {
+#[function_metrics(labels(shard_id))]
+async fn timed_async(shard_id: String) -> String {
     tokio::time::sleep(Duration::from_millis(2)).await;
-    chain_id
+    shard_id
 }
 
 #[function_metrics(name = "early_sync")]
@@ -35,10 +35,10 @@ struct TimedService;
 
 #[async_trait]
 trait TimedOperation {
-    #[function_metrics(name = "test_async_trait", labels(chain_id))]
-    async fn execute(&self, chain_id: u64) -> u64 {
+    #[function_metrics(name = "test_async_trait", labels(shard_id))]
+    async fn execute(&self, shard_id: u64) -> u64 {
         tokio::time::sleep(Duration::from_millis(2)).await;
-        chain_id
+        shard_id
     }
 }
 
@@ -49,15 +49,15 @@ struct ImplementedService;
 
 #[async_trait]
 trait ImplementedOperation {
-    async fn execute(&self, chain_id: u64) -> u64;
+    async fn execute(&self, shard_id: u64) -> u64;
 }
 
 #[async_trait]
 impl ImplementedOperation for ImplementedService {
-    #[function_metrics(name = "test_async_trait_impl", labels(chain_id))]
-    async fn execute(&self, chain_id: u64) -> u64 {
+    #[function_metrics(name = "test_async_trait_impl", labels(shard_id))]
+    async fn execute(&self, shard_id: u64) -> u64 {
         tokio::time::sleep(Duration::from_millis(2)).await;
-        chain_id
+        shard_id
     }
 }
 
@@ -98,12 +98,12 @@ fn histogram(recorder: &DebuggingRecorder, expected_name: &str) -> (Vec<Label>, 
 fn records_seconds_with_dynamic_and_static_labels() {
     let recorder = DebuggingRecorder::new();
 
-    metrics::with_local_recorder(&recorder, || assert_eq!(timed_sync(8453), 8453));
+    metrics::with_local_recorder(&recorder, || assert_eq!(timed_sync(7), 7));
 
     let (labels, values) = histogram(&recorder, "test_sync_duration_seconds");
     assert_eq!(
         labels,
-        vec![Label::new("chain_id", "8453"), Label::new("provider", "test")]
+        vec![Label::new("shard_id", "7"), Label::new("provider", "test")]
     );
     assert_eq!(values.len(), 1);
     assert!(values[0] >= 0.001);
@@ -115,10 +115,10 @@ async fn derives_a_name_and_handles_moved_labels() {
     let recorder = DebuggingRecorder::new();
     let _guard = metrics::set_default_local_recorder(&recorder);
 
-    assert_eq!(timed_async("solana".to_owned()).await, "solana");
+    assert_eq!(timed_async("shard-a".to_owned()).await, "shard-a");
 
     let (labels, values) = histogram(&recorder, "timed_async_duration_seconds");
-    assert_eq!(labels, vec![Label::new("chain_id", "solana")]);
+    assert_eq!(labels, vec![Label::new("shard_id", "shard-a")]);
     assert_eq!(values.len(), 1);
     assert!(values[0] >= 0.001);
 }
@@ -131,7 +131,7 @@ async fn times_async_trait_execution_instead_of_future_creation() {
     assert_eq!(TimedService.execute(1).await, 1);
 
     let (labels, values) = histogram(&recorder, "test_async_trait_duration_seconds");
-    assert_eq!(labels, vec![Label::new("chain_id", "1")]);
+    assert_eq!(labels, vec![Label::new("shard_id", "1")]);
     assert_eq!(values.len(), 1);
     assert!(values[0] >= 0.001);
 }
@@ -144,7 +144,7 @@ async fn times_instrumented_async_trait_impl_methods() {
     assert_eq!(ImplementedService.execute(10).await, 10);
 
     let (labels, values) = histogram(&recorder, "test_async_trait_impl_duration_seconds");
-    assert_eq!(labels, vec![Label::new("chain_id", "10")]);
+    assert_eq!(labels, vec![Label::new("shard_id", "10")]);
     assert_eq!(values.len(), 1);
     assert!(values[0] >= 0.001);
 }

@@ -146,8 +146,8 @@ impl Parse for FunctionMetricsArgs {
 /// #[function_metrics]
 /// async fn refresh_cache() {}
 ///
-/// #[function_metrics(name = "quote_evm", labels(chain_id, dex = "uniswap_v3"))]
-/// async fn quote(chain_id: ChainId) {}
+/// #[function_metrics(name = "handle_request", labels(method, service = "api"))]
+/// async fn handle_request(method: Method) {}
 /// ```
 #[proc_macro_attribute]
 pub fn function_metrics(args: TokenStream, input: TokenStream) -> TokenStream {
@@ -334,7 +334,7 @@ mod tests {
 
     #[test]
     fn rejects_duplicate_label_options_even_when_the_first_is_empty() {
-        let error = syn::parse_str::<FunctionMetricsArgs>("labels(), labels(chain_id)")
+        let error = syn::parse_str::<FunctionMetricsArgs>("labels(), labels(method)")
             .err()
             .expect("duplicate labels should fail");
         assert!(error.to_string().contains("duplicate `labels` option"));
@@ -342,10 +342,10 @@ mod tests {
 
     #[test]
     fn rejects_duplicate_label_keys() {
-        let error = syn::parse_str::<FunctionMetricsArgs>("labels(chain_id, chain_id)")
+        let error = syn::parse_str::<FunctionMetricsArgs>("labels(method, method)")
             .err()
             .expect("duplicate keys should fail");
-        assert!(error.to_string().contains("duplicate label key `chain_id`"));
+        assert!(error.to_string().contains("duplicate label key `method`"));
     }
 
     #[test]
@@ -358,7 +358,7 @@ mod tests {
 
     #[test]
     fn rejects_non_snake_case_operation_names() {
-        let name = LitStr::new("QuoteDuration", proc_macro2::Span::call_site());
+        let name = LitStr::new("RequestDuration", proc_macro2::Span::call_site());
         assert!(validate_operation_name(&name).is_err());
     }
 }
