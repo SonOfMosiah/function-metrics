@@ -1,0 +1,8 @@
+[package]
+name = "renamed-dependency-test"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+fm = { package = "function-metrics", path = "../../crates/function-metrics" }

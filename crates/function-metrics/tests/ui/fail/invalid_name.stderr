@@ -1,0 +1,5 @@
+error: operation names must use Prometheus-compatible snake_case characters
+ --> tests/ui/fail/invalid_name.rs:3:27
+  |
+3 | #[function_metrics(name = "Not_Snake_Case")]
+  |                           ^^^^^^^^^^^^^^^^

@@ -1,0 +1,5 @@
+error: tuple fields need an explicit label name, such as `index = value.0`
+ --> tests/ui/fail/tuple_field.rs:3:27
+  |
+3 | #[function_metrics(labels(value.0))]
+  |                           ^^^^^^^

@@ -1,0 +1,5 @@
+error: duplicate label key `chain_id`
+ --> tests/ui/fail/duplicate_labels.rs:3:20
+  |
+3 | #[function_metrics(labels(chain_id, chain_id))]
+  |                    ^^^^^^

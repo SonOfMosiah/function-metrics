@@ -1,0 +1,5 @@
+error: `function_metrics` does not support const functions
+ --> tests/ui/fail/const_function.rs:4:1
+  |
+4 | const fn constant() -> u64 {
+  | ^^^^^

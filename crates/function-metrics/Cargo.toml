@@ -1,0 +1,22 @@
+[package]
+name = "function-metrics"
+description = "Prometheus-native function instrumentation for Rust's metrics facade"
+keywords = ["metrics", "prometheus", "instrumentation", "async", "proc-macro"]
+categories = ["development-tools::profiling", "asynchronous"]
+readme = "../../README.md"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+function-metrics-macros.workspace = true
+metrics.workspace = true
+
+[dev-dependencies]
+async-trait = "0.1"
+metrics-util = { version = "0.20", features = ["debugging"] }
+tokio = { version = "1", features = ["macros", "rt", "time"] }
+trybuild = "1"
