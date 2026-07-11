@@ -79,9 +79,17 @@ paths, and arbitrary error messages are not.
 - Sync, native async, and `async-trait` functions are supported.
 - The full future execution is timed, not merely future construction.
 - Normal returns, including `return` and `?`, record a duration.
-- Panics and cancelled/dropped futures do not currently record a duration.
+- Panics record a duration while unwinding.
+- Cancelled or dropped futures record a duration after polling has started.
 - Label values are captured before the timer starts and before the function
   body can consume its arguments.
+
+Functions marked `#[track_caller]` are rejected because wrapping their bodies
+would change `Location::caller()`. Non-async functions returning `impl Future`
+are also rejected; use `async fn` so the macro can time future execution rather
+than only future construction. Future traits imported under a different name
+and concrete future return-type aliases cannot be detected by an attribute
+macro and should not be annotated.
 
 ## Metric naming
 

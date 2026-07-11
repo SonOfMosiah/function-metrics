@@ -140,7 +140,11 @@ impl Parse for FunctionMetricsArgs {
 ///
 /// The operation name defaults to the Rust function name. The emitted
 /// histogram is named `{operation}_duration_seconds`, and elapsed time is
-/// recorded as fractional seconds through the `metrics` facade.
+/// recorded as fractional seconds through the `metrics` facade. Normal
+/// returns, panics, and cancellation after polling begins all record a value.
+/// `#[track_caller]` functions and non-async functions returning `impl Future`
+/// are rejected because they cannot be instrumented without changing semantics.
+/// Renamed Future imports and concrete future return-type aliases cannot be detected.
 ///
 /// ```ignore
 /// #[function_metrics]
@@ -159,6 +163,26 @@ pub fn function_metrics(args: TokenStream, input: TokenStream) -> TokenStream {
             .into_compile_error()
             .into();
     }
+    if let Some(attribute) = input_fn
+        .attrs
+        .iter()
+        .find(|attribute| attribute.path().is_ident("track_caller"))
+    {
+        return syn::Error::new_spanned(
+            attribute,
+            "`function_metrics` does not support `#[track_caller]`; instrumentation would change caller locations",
+        )
+        .into_compile_error()
+        .into();
+    }
+    if input_fn.sig.asyncness.is_none() && returns_impl_future(&input_fn.sig.output) {
+        return syn::Error::new_spanned(
+            &input_fn.sig.output,
+            "`function_metrics` does not support functions returning `impl Future`; use `async fn` so execution can be timed",
+        )
+        .into_compile_error()
+        .into();
+    }
 
     let operation_name = args
         .name
@@ -176,65 +200,55 @@ pub fn function_metrics(args: TokenStream, input: TokenStream) -> TokenStream {
         operation_name.span(),
     );
 
-    let mut label_captures = Vec::new();
     let mut labels = Vec::new();
-    for (index, label) in args.labels.into_iter().enumerate() {
+    for label in args.labels {
         let key = label.key;
         match label.value {
             LabelValue::Static(value) => {
                 labels.push(quote! { #runtime::__private::Label::new(#key, #value) });
             }
             LabelValue::Dynamic(expression) => {
-                let capture = format_ident!("__function_metrics_label_{index}");
-                label_captures.push(quote! {
-                    let #capture = (#expression).to_string();
-                });
-                labels.push(quote! { #runtime::__private::Label::new(#key, #capture) });
+                labels.push(quote! { #runtime::__private::Label::new(#key, (#expression).to_string()) });
             }
         }
     }
 
-    let record_duration = quote! {
-        #runtime::__private::record_duration(
+    let original_block = &input_fn.block;
+    let measure_sync = quote! {
+        #runtime::__private::measure_sync(
             #histogram_name,
             ::std::vec![#(#labels),*],
-            __function_metrics_duration,
-        );
+            || #original_block,
+        )
+    };
+    let measure_future = quote! {
+        #runtime::__private::measure_future(
+            #histogram_name,
+            ::std::vec![#(#labels),*],
+            async #original_block,
+        )
     };
 
-    let original_block = &input_fn.block;
     let is_native_async = input_fn.sig.asyncness.is_some();
     let is_async_trait_future = !is_native_async && returns_future(&input_fn.sig.output);
 
     let new_block = if is_native_async {
         quote! {{
-            #(#label_captures)*
-            let __function_metrics_started = ::std::time::Instant::now();
-            let __function_metrics_result = (async #original_block).await;
-            let __function_metrics_duration = __function_metrics_started.elapsed();
-            #record_duration
-            __function_metrics_result
+            #measure_future.await
         }}
     } else if is_async_trait_future {
         quote! {{
             ::std::boxed::Box::pin(async move {
-                #(#label_captures)*
-                let __function_metrics_started = ::std::time::Instant::now();
-                let __function_metrics_future = #original_block;
-                let __function_metrics_result = __function_metrics_future.await;
-                let __function_metrics_duration = __function_metrics_started.elapsed();
-                #record_duration
-                __function_metrics_result
+                #runtime::__private::measure_future(
+                    #histogram_name,
+                    ::std::vec![#(#labels),*],
+                    async move { (|| #original_block)().await },
+                ).await
             })
         }}
     } else {
         quote! {{
-            #(#label_captures)*
-            let __function_metrics_started = ::std::time::Instant::now();
-            let __function_metrics_result = (|| #original_block)();
-            let __function_metrics_duration = __function_metrics_started.elapsed();
-            #record_duration
-            __function_metrics_result
+            #measure_sync
         }}
     };
 
@@ -300,6 +314,26 @@ fn returns_future(return_type: &ReturnType) -> bool {
         .any(|bound| matches!(bound, TypeParamBound::Trait(trait_bound) if is_standard_future_path(&trait_bound.path)))
 }
 
+fn returns_impl_future(return_type: &ReturnType) -> bool {
+    let ReturnType::Type(_, return_type) = return_type else {
+        return false;
+    };
+    let Type::ImplTrait(impl_trait) = return_type.as_ref() else {
+        return false;
+    };
+
+    impl_trait.bounds.iter().any(|bound| {
+        let TypeParamBound::Trait(trait_bound) = bound else {
+            return false;
+        };
+        trait_bound
+            .path
+            .segments
+            .last()
+            .is_some_and(|segment| segment.ident == "Future")
+    })
+}
+
 fn is_standard_future_path(path: &syn::Path) -> bool {
     let segments = path
         .segments
@@ -360,5 +394,13 @@ mod tests {
     fn rejects_non_snake_case_operation_names() {
         let name = LitStr::new("RequestDuration", proc_macro2::Span::call_site());
         assert!(validate_operation_name(&name).is_err());
+    }
+
+    #[test]
+    fn recognizes_impl_future_return_types() {
+        let qualified = syn::parse_str::<ReturnType>("-> impl ::std::future::Future<Output = u64>").unwrap();
+        let imported = syn::parse_str::<ReturnType>("-> impl Future<Output = u64>").unwrap();
+        assert!(returns_impl_future(&qualified));
+        assert!(returns_impl_future(&imported));
     }
 }

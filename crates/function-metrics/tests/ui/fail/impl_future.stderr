@@ -1,0 +1,5 @@
+error: `function_metrics` does not support functions returning `impl Future`; use `async fn` so execution can be timed
+ --> tests/ui/fail/impl_future.rs:4:23
+  |
+4 | fn construct_future() -> impl std::future::Future<Output = u64> {
+  |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

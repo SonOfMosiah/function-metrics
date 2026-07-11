@@ -1,8 +1,11 @@
-use std::time::Duration;
+use std::{
+    sync::atomic::{AtomicUsize, Ordering},
+    time::Duration,
+};
 
 use async_trait::async_trait;
 use function_metrics::function_metrics;
-use metrics::Label;
+use metrics::{Counter, Gauge, Histogram, Key, KeyName, Label, Metadata, Recorder, SharedString, Unit};
 use metrics_util::debugging::{DebugValue, DebuggingRecorder};
 
 #[function_metrics(name = "test_sync", labels(shard_id, provider = "test"))]
@@ -31,6 +34,18 @@ async fn question_mark_async() -> Result<(), &'static str> {
     Ok(())
 }
 
+#[function_metrics(name = "panicking_sync")]
+fn panicking_sync() {
+    if std::hint::black_box(true) {
+        panic!("timed panic");
+    }
+}
+
+#[function_metrics(name = "cancelled_async")]
+async fn pending_async() {
+    std::future::pending::<()>().await;
+}
+
 struct TimedService;
 
 #[async_trait]
@@ -39,6 +54,12 @@ trait TimedOperation {
     async fn execute(&self, shard_id: u64) -> u64 {
         tokio::time::sleep(Duration::from_millis(2)).await;
         shard_id
+    }
+
+    #[function_metrics(name = "cancelled_async_trait", labels(shard_id))]
+    async fn pending(&self, shard_id: u64) {
+        let _ = shard_id;
+        std::future::pending::<()>().await;
     }
 }
 
@@ -61,9 +82,59 @@ impl ImplementedOperation for ImplementedService {
     }
 }
 
+struct LazyLabelService {
+    captures: AtomicUsize,
+}
+
+#[async_trait]
+trait LazyLabelOperation {
+    async fn pending(&self);
+}
+
+#[async_trait]
+impl LazyLabelOperation for LazyLabelService {
+    #[function_metrics(
+        name = "lazy_async_trait_label",
+        labels(capture = self.captures.fetch_add(1, Ordering::Relaxed))
+    )]
+    async fn pending(&self) {
+        std::future::pending::<()>().await;
+    }
+}
+
 struct Request {
     status: String,
     region: String,
+}
+
+struct PanickingHistogram;
+
+impl metrics::HistogramFn for PanickingHistogram {
+    fn record(&self, _value: f64) {
+        panic!("recorder panic");
+    }
+}
+
+struct PanickingRecorder;
+
+impl Recorder for PanickingRecorder {
+    fn describe_counter(&self, _key: KeyName, _unit: Option<Unit>, _description: SharedString) {}
+
+    fn describe_gauge(&self, _key: KeyName, _unit: Option<Unit>, _description: SharedString) {}
+
+    fn describe_histogram(&self, _key: KeyName, _unit: Option<Unit>, _description: SharedString) {}
+
+    fn register_counter(&self, _key: &Key, _metadata: &Metadata<'_>) -> Counter {
+        Counter::noop()
+    }
+
+    fn register_gauge(&self, _key: &Key, _metadata: &Metadata<'_>) -> Gauge {
+        Gauge::noop()
+    }
+
+    fn register_histogram(&self, _key: &Key, _metadata: &Metadata<'_>) -> Histogram {
+        Histogram::from_arc(std::sync::Arc::new(PanickingHistogram))
+    }
 }
 
 #[function_metrics(name = "test_fields", labels(status = request.status, request.region))]
@@ -183,4 +254,81 @@ async fn records_async_question_mark_returns() {
 
     let (_, values) = histogram(&recorder, "question_mark_async_duration_seconds");
     assert_eq!(values.len(), 1);
+}
+
+#[test]
+fn records_panicking_functions() {
+    let recorder = DebuggingRecorder::new();
+
+    metrics::with_local_recorder(&recorder, || {
+        assert!(std::panic::catch_unwind(panicking_sync).is_err());
+    });
+
+    let (_, values) = histogram(&recorder, "panicking_sync_duration_seconds");
+    assert_eq!(values.len(), 1);
+}
+
+#[test]
+fn recorder_panic_during_unwind_does_not_abort() {
+    const CHILD_PROCESS: &str = "FUNCTION_METRICS_UNWIND_CHILD";
+
+    if std::env::var_os(CHILD_PROCESS).is_some() {
+        metrics::with_local_recorder(&PanickingRecorder, || {
+            assert!(std::panic::catch_unwind(panicking_sync).is_err());
+        });
+        return;
+    }
+
+    let status = std::process::Command::new(std::env::current_exe().expect("test executable must exist"))
+        .args(["--exact", "recorder_panic_during_unwind_does_not_abort"])
+        .env(CHILD_PROCESS, "1")
+        .status()
+        .expect("child test process must start");
+
+    assert!(status.success(), "child process aborted with {status}");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn records_cancelled_futures_after_polling_starts() {
+    let recorder = DebuggingRecorder::new();
+    let _guard = metrics::set_default_local_recorder(&recorder);
+
+    {
+        let mut future = std::pin::pin!(pending_async());
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        assert!(std::future::Future::poll(future.as_mut(), &mut context).is_pending());
+    }
+
+    let (_, values) = histogram(&recorder, "cancelled_async_duration_seconds");
+    assert_eq!(values.len(), 1);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn records_cancelled_async_trait_futures_with_labels() {
+    let recorder = DebuggingRecorder::new();
+    let _guard = metrics::set_default_local_recorder(&recorder);
+
+    {
+        let mut future = std::pin::pin!(TimedService.pending(17));
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        assert!(std::future::Future::poll(future.as_mut(), &mut context).is_pending());
+    }
+
+    let (labels, values) = histogram(&recorder, "cancelled_async_trait_duration_seconds");
+    assert_eq!(labels, vec![Label::new("shard_id", "17")]);
+    assert_eq!(values.len(), 1);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn defers_async_trait_labels_until_first_poll() {
+    let service = LazyLabelService {
+        captures: AtomicUsize::new(0),
+    };
+    let mut future = std::pin::pin!(service.pending());
+
+    assert_eq!(service.captures.load(Ordering::Relaxed), 0);
+
+    let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+    assert!(std::future::Future::poll(future.as_mut(), &mut context).is_pending());
+    assert_eq!(service.captures.load(Ordering::Relaxed), 1);
 }
