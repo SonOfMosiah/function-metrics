@@ -4,7 +4,32 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
+  conventional-commits:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Select commit range
+        id: range
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo "value=${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ github.event.before }}" == "0000000000000000000000000000000000000000" ]]; then
+            echo "value=" >> "$GITHUB_OUTPUT"
+            echo "New branch push; the pull request workflow will validate its commits."
+          else
+            echo "value=${{ github.event.before }}..${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.range.outputs.value != ''
+        run: scripts/check-conventional-commits.sh "${{ steps.range.outputs.value }}"
+
   test:
     runs-on: ubuntu-latest
     steps:
@@ -18,7 +43,7 @@ jobs:
       - run: cargo test --workspace --all-features
       - run: RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
       - run: cargo check --manifest-path tests/renamed-dependency/Cargo.toml
-      - run: cargo package -p function-metrics-macros --allow-dirty
+      - run: cargo package -p function-metrics-macros
 
   msrv:
     runs-on: ubuntu-latest

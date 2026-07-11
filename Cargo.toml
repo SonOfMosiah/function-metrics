@@ -7,7 +7,7 @@ resolver = "2"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.86"
-license = "GPL-3.0-only"
+license = "MIT"
 repository = "https://github.com/SonOfMosiah/function-metrics"
 homepage = "https://github.com/SonOfMosiah/function-metrics"
 
@@ -17,4 +17,4 @@ metrics = "0.24"
 proc-macro-crate = "3"
 proc-macro2 = "1"
 quote = "1"
-syn = { version = "2", features = ["full", "extra-traits"] }
+syn = { version = "2", features = ["full"] }

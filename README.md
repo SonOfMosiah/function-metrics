@@ -17,12 +17,6 @@ or `status`.
 function-metrics = "0.1"
 ```
 
-Until the first crates.io release, use the Git dependency instead:
-
-```toml
-function-metrics = { git = "https://github.com/SonOfMosiah/function-metrics" }
-```
-
 ```rust
 use function_metrics::function_metrics;
 
@@ -124,11 +118,13 @@ cargo check --manifest-path tests/renamed-dependency/Cargo.toml
 
 The minimum supported Rust version is 1.86.
 
+See [`CONTRIBUTING.md`](https://github.com/SonOfMosiah/function-metrics/blob/main/CONTRIBUTING.md)
+for Conventional Commit requirements and automated release/changelog details.
+
 For a release, publish `function-metrics-macros` first. After that version is
 visible in the crates.io index, package and publish `function-metrics`; Cargo
 requires every non-development dependency to already exist in the registry.
 
 ## License
 
-GPL-3.0-only. This implementation was extracted from an existing GPL-3.0
-codebase.
+MIT. See [`LICENSE`](LICENSE).

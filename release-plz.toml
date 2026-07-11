@@ -1,0 +1,24 @@
+[workspace]
+changelog_update = false
+release_always = false
+semver_check = false
+pr_labels = ["release"]
+git_tag_enable = false
+git_release_enable = false
+
+[[package]]
+name = "function-metrics"
+version_group = "function-metrics"
+changelog_update = true
+changelog_path = "./CHANGELOG.md"
+changelog_include = ["function-metrics-macros"]
+git_tag_enable = true
+git_tag_name = "v{{ version }}"
+git_release_enable = true
+
+[[package]]
+name = "function-metrics-macros"
+version_group = "function-metrics"
+changelog_update = false
+git_tag_enable = false
+git_release_enable = false

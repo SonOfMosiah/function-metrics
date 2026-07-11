@@ -1,0 +1,60 @@
+name: Release-plz
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: release-plz-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-pr:
+    if: github.repository_owner == 'SonOfMosiah'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+        with:
+          toolchain: 1.86.0
+      - name: Check release bootstrap
+        id: bootstrap
+        shell: bash
+        run: |
+          if git rev-parse --verify refs/tags/v0.1.0 >/dev/null 2>&1; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "Initial v0.1.0 release has not been tagged; skipping release PR automation."
+          fi
+      - name: Install release-plz
+        if: steps.bootstrap.outputs.ready == 'true'
+        shell: bash
+        env:
+          RELEASE_PLZ_VERSION: release-plz-v0.3.159
+          RELEASE_PLZ_SHA256: baeb11c5dd4a3d76971bbd9b48583519d0e0644a5ae60eb666c4f9331598157f
+        run: |
+          archive="$RUNNER_TEMP/release-plz.tar.gz"
+          curl --fail --location --silent --show-error \
+            "https://github.com/release-plz/release-plz/releases/download/$RELEASE_PLZ_VERSION/release-plz-x86_64-unknown-linux-gnu.tar.gz" \
+            --output "$archive"
+          echo "$RELEASE_PLZ_SHA256  $archive" | sha256sum --check
+          tar --extract --gzip --file "$archive" --directory "$RUNNER_TEMP" release-plz
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - name: Create or update the release PR
+        if: steps.bootstrap.outputs.ready == 'true'
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          release-plz release-pr \
+            --git-token "$GITHUB_TOKEN" \
+            --repo-url "https://github.com/$GITHUB_REPOSITORY"
