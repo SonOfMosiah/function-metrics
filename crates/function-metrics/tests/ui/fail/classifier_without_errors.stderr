@@ -1,0 +1,5 @@
+error: `error_classifier` requires `metrics(..., errors)`
+ --> tests/ui/fail/classifier_without_errors.rs:5:55
+  |
+5 | #[function_metrics(metrics(calls), error_classifier = is_error)]
+  |                                                       ^^^^^^^^

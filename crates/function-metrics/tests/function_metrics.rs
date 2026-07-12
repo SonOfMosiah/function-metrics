@@ -14,6 +14,52 @@ fn timed_sync(shard_id: u64) -> u64 {
     shard_id
 }
 
+#[function_metrics(
+    name = "instrumented_result",
+    metrics(duration, calls, errors),
+    labels(provider = "test")
+)]
+fn instrumented_result(succeed: bool) -> Result<(), &'static str> {
+    if succeed { Ok(()) } else { Err("failed") }
+}
+
+type ClassifiedResult = u16;
+
+fn status_is_error(status: &ClassifiedResult) -> bool {
+    *status >= 400
+}
+
+#[function_metrics(
+    name = "classified_result",
+    metrics(calls, errors),
+    error_classifier = status_is_error
+)]
+fn classified_result(status: u16) -> ClassifiedResult {
+    status
+}
+
+#[function_metrics(name = "fallible_async", metrics(calls, errors))]
+async fn fallible_async() -> Result<(), &'static str> {
+    Err::<(), _>("question mark")?;
+    Ok(())
+}
+
+#[function_metrics(name = "panicking_result", metrics(calls, errors))]
+fn panicking_result() -> Result<(), &'static str> {
+    panic!("panic is not a returned error")
+}
+
+#[function_metrics(name = "pending_calls", metrics(calls, errors))]
+async fn pending_calls() -> Result<(), &'static str> {
+    std::future::pending::<()>().await;
+    Ok(())
+}
+
+#[function_metrics(name = "described_operation", metrics(duration, calls, errors))]
+fn described_operation() -> Result<(), &'static str> {
+    Ok(())
+}
+
 #[function_metrics(labels(shard_id))]
 async fn timed_async(shard_id: String) -> String {
     tokio::time::sleep(Duration::from_millis(2)).await;
@@ -60,6 +106,29 @@ trait TimedOperation {
     async fn pending(&self, shard_id: u64) {
         let _ = shard_id;
         std::future::pending::<()>().await;
+    }
+
+    #[function_metrics(name = "fallible_async_trait", metrics(duration, calls, errors), labels(shard_id))]
+    async fn fallible(&self, shard_id: u64) -> Result<(), &'static str> {
+        let _ = shard_id;
+        Err("trait failure")
+    }
+
+    #[function_metrics(name = "pending_async_trait_all", metrics(duration, calls, errors), labels(shard_id))]
+    async fn pending_all(&self, shard_id: u64) -> Result<(), &'static str> {
+        let _ = shard_id;
+        std::future::pending::<()>().await;
+        Ok(())
+    }
+
+    #[function_metrics(
+        name = "panicking_async_trait_all",
+        metrics(duration, calls, errors),
+        labels(shard_id)
+    )]
+    async fn panicking_all(&self, shard_id: u64) -> Result<(), &'static str> {
+        let _ = shard_id;
+        panic!("async-trait panic is not a returned error")
     }
 }
 
@@ -165,6 +234,151 @@ fn histogram(recorder: &DebuggingRecorder, expected_name: &str) -> (Vec<Label>, 
         .unwrap_or_else(|| panic!("missing histogram {expected_name}"))
 }
 
+fn metrics_snapshot(recorder: &DebuggingRecorder) -> std::collections::HashMap<String, (Vec<Label>, DebugValue)> {
+    recorder
+        .snapshotter()
+        .snapshot()
+        .into_vec()
+        .into_iter()
+        .map(|(key, _, _, value)| {
+            let (_, key) = key.into_parts();
+            let (name, labels) = key.into_parts();
+            (name.as_str().to_owned(), (labels, value))
+        })
+        .collect()
+}
+
+#[test]
+fn records_selected_duration_calls_and_errors() {
+    let recorder = DebuggingRecorder::new();
+
+    metrics::with_local_recorder(&recorder, || {
+        assert_eq!(instrumented_result(true), Ok(()));
+        assert_eq!(instrumented_result(false), Err("failed"));
+    });
+    let snapshot = metrics_snapshot(&recorder);
+    let expected_labels = vec![Label::new("provider", "test")];
+    assert!(matches!(
+        snapshot.get("instrumented_result_duration_seconds"),
+        Some((labels, DebugValue::Histogram(values))) if labels == &expected_labels && values.len() == 2
+    ));
+    assert!(matches!(
+        snapshot.get("instrumented_result_calls_total"),
+        Some((labels, DebugValue::Counter(2))) if labels == &expected_labels
+    ));
+    assert!(matches!(
+        snapshot.get("instrumented_result_errors_total"),
+        Some((labels, DebugValue::Counter(1))) if labels == &expected_labels
+    ));
+}
+
+#[test]
+fn classifies_domain_errors_without_a_duration_histogram() {
+    let recorder = DebuggingRecorder::new();
+
+    metrics::with_local_recorder(&recorder, || {
+        assert_eq!(classified_result(200), 200);
+        assert_eq!(classified_result(503), 503);
+    });
+
+    let snapshot = metrics_snapshot(&recorder);
+    assert!(matches!(
+        snapshot.get("classified_result_calls_total"),
+        Some((_, DebugValue::Counter(2)))
+    ));
+    assert!(matches!(
+        snapshot.get("classified_result_errors_total"),
+        Some((_, DebugValue::Counter(1)))
+    ));
+    assert!(!snapshot.contains_key("classified_result_duration_seconds"));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn records_calls_for_errors_panics_and_polled_cancellation_only() {
+    let recorder = DebuggingRecorder::new();
+    let _guard = metrics::set_default_local_recorder(&recorder);
+
+    assert_eq!(fallible_async().await, Err("question mark"));
+    assert!(std::panic::catch_unwind(panicking_result).is_err());
+
+    let unpolled = pending_calls();
+    drop(unpolled);
+
+    {
+        let mut polled = std::pin::pin!(pending_calls());
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        assert!(std::future::Future::poll(polled.as_mut(), &mut context).is_pending());
+    }
+
+    let snapshot = metrics_snapshot(&recorder);
+    assert!(matches!(
+        snapshot.get("fallible_async_calls_total"),
+        Some((_, DebugValue::Counter(1)))
+    ));
+    assert!(matches!(
+        snapshot.get("fallible_async_errors_total"),
+        Some((_, DebugValue::Counter(1)))
+    ));
+    assert!(matches!(
+        snapshot.get("panicking_result_calls_total"),
+        Some((_, DebugValue::Counter(1)))
+    ));
+    assert!(matches!(
+        snapshot.get("panicking_result_errors_total"),
+        Some((_, DebugValue::Counter(0)))
+    ));
+    assert!(matches!(
+        snapshot.get("pending_calls_calls_total"),
+        Some((_, DebugValue::Counter(1)))
+    ));
+    assert!(matches!(
+        snapshot.get("pending_calls_errors_total"),
+        Some((_, DebugValue::Counter(0)))
+    ));
+}
+
+#[test]
+fn registers_metric_descriptions_and_duration_units() {
+    let recorder = DebuggingRecorder::new();
+    metrics::with_local_recorder(&recorder, || assert_eq!(described_operation(), Ok(())));
+
+    let metadata = recorder
+        .snapshotter()
+        .snapshot()
+        .into_vec()
+        .into_iter()
+        .map(|(key, unit, description, _)| {
+            let (_, key) = key.into_parts();
+            (
+                key.name().to_string(),
+                (unit, description.map(|description| description.to_string())),
+            )
+        })
+        .collect::<std::collections::HashMap<_, _>>();
+
+    assert_eq!(
+        metadata.get("described_operation_duration_seconds"),
+        Some(&(
+            Some(Unit::Seconds),
+            Some("Duration of `described_operation` function executions.".to_owned())
+        ))
+    );
+    assert_eq!(
+        metadata.get("described_operation_calls_total"),
+        Some(&(
+            None,
+            Some("Number of `described_operation` function executions.".to_owned())
+        ))
+    );
+    assert_eq!(
+        metadata.get("described_operation_errors_total"),
+        Some(&(
+            None,
+            Some("Number of `described_operation` function executions that returned an error.".to_owned())
+        ))
+    );
+}
+
 #[test]
 fn records_seconds_with_dynamic_and_static_labels() {
     let recorder = DebuggingRecorder::new();
@@ -205,6 +419,29 @@ async fn times_async_trait_execution_instead_of_future_creation() {
     assert_eq!(labels, vec![Label::new("shard_id", "1")]);
     assert_eq!(values.len(), 1);
     assert!(values[0] >= 0.001);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn records_async_trait_calls_and_errors() {
+    let recorder = DebuggingRecorder::new();
+    let _guard = metrics::set_default_local_recorder(&recorder);
+
+    assert_eq!(TimedService.fallible(9).await, Err("trait failure"));
+
+    let snapshot = metrics_snapshot(&recorder);
+    let expected_labels = vec![Label::new("shard_id", "9")];
+    assert!(matches!(
+        snapshot.get("fallible_async_trait_duration_seconds"),
+        Some((labels, DebugValue::Histogram(values))) if labels == &expected_labels && values.len() == 1
+    ));
+    assert!(matches!(
+        snapshot.get("fallible_async_trait_calls_total"),
+        Some((labels, DebugValue::Counter(1))) if labels == &expected_labels
+    ));
+    assert!(matches!(
+        snapshot.get("fallible_async_trait_errors_total"),
+        Some((labels, DebugValue::Counter(1))) if labels == &expected_labels
+    ));
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -317,6 +554,49 @@ async fn records_cancelled_async_trait_futures_with_labels() {
     let (labels, values) = histogram(&recorder, "cancelled_async_trait_duration_seconds");
     assert_eq!(labels, vec![Label::new("shard_id", "17")]);
     assert_eq!(values.len(), 1);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn records_async_trait_calls_for_panics_and_polled_cancellation_only() {
+    let recorder = DebuggingRecorder::new();
+    let _guard = metrics::set_default_local_recorder(&recorder);
+
+    let unpolled = TimedService.pending_all(18);
+    drop(unpolled);
+
+    {
+        let mut polled = std::pin::pin!(TimedService.pending_all(18));
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        assert!(std::future::Future::poll(polled.as_mut(), &mut context).is_pending());
+    }
+
+    {
+        let mut panicking = std::pin::pin!(TimedService.panicking_all(19));
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                std::future::Future::poll(panicking.as_mut(), &mut context)
+            }))
+            .is_err()
+        );
+    }
+
+    let snapshot = metrics_snapshot(&recorder);
+    for (name, shard_id) in [("pending_async_trait_all", "18"), ("panicking_async_trait_all", "19")] {
+        let expected_labels = vec![Label::new("shard_id", shard_id)];
+        assert!(matches!(
+            snapshot.get(&format!("{name}_duration_seconds")),
+            Some((labels, DebugValue::Histogram(values))) if labels == &expected_labels && values.len() == 1
+        ));
+        assert!(matches!(
+            snapshot.get(&format!("{name}_calls_total")),
+            Some((labels, DebugValue::Counter(1))) if labels == &expected_labels
+        ));
+        assert!(matches!(
+            snapshot.get(&format!("{name}_errors_total")),
+            Some((labels, DebugValue::Counter(0))) if labels == &expected_labels
+        ));
+    }
 }
 
 #[tokio::test(flavor = "current_thread")]

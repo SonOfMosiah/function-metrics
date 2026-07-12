@@ -1,0 +1,5 @@
+error: `metrics(...)` must not be empty
+ --> tests/ui/fail/empty_metrics.rs:3:20
+  |
+3 | #[function_metrics(metrics())]
+  |                    ^^^^^^^

@@ -4,7 +4,7 @@ exclude = ["tests/renamed-dependency"]
 resolver = "2"
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.86"
 license = "MIT"
@@ -12,7 +12,7 @@ repository = "https://github.com/SonOfMosiah/function-metrics"
 homepage = "https://github.com/SonOfMosiah/function-metrics"
 
 [workspace.dependencies]
-function-metrics-macros = { version = "=0.1.0", path = "crates/function-metrics-macros" }
+function-metrics-macros = { version = "=0.2.0", path = "crates/function-metrics-macros" }
 metrics = "0.24"
 proc-macro-crate = "3"
 proc-macro2 = "1"

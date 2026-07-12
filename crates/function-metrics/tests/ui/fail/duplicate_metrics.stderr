@@ -1,0 +1,5 @@
+error: duplicate metric `duration`
+ --> tests/ui/fail/duplicate_metrics.rs:3:38
+  |
+3 | #[function_metrics(metrics(duration, duration))]
+  |                                      ^^^^^^^^
