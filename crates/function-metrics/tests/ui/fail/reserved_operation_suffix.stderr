@@ -1,0 +1,5 @@
+error: operation names must not include a generated metric suffix
+ --> tests/ui/fail/reserved_operation_suffix.rs:3:27
+  |
+3 | #[function_metrics(name = "already_calls_total", metrics(calls))]
+  |                           ^^^^^^^^^^^^^^^^^^^^^

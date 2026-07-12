@@ -1,0 +1,5 @@
+error: expected `duration`, `calls`, or `errors`
+ --> tests/ui/fail/unknown_metric.rs:3:28
+  |
+3 | #[function_metrics(metrics(histogram))]
+  |                            ^^^^^^^^^

@@ -1,0 +1,5 @@
+error: the `errors` metric requires a visible `Result` return type or `error_classifier = path`
+ --> tests/ui/fail/errors_non_result.rs:4:18
+  |
+4 | fn unsupported() -> u16 { 500 }
+  |                  ^^^^^^
